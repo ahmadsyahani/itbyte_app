@@ -1,27 +1,101 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:itbyte_app/screens/edit_profile.dart'; // Import halaman edit profil
 
-class ProfileScreen extends StatelessWidget {
+// Definisikan client Supabase agar mudah diakses
+final supabase = Supabase.instance.client;
+
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
   @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  // State untuk menyimpan data profil
+  bool _isLoading = true;
+  String? _fullName;
+  String? _email;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchProfile();
+  }
+
+  /// Mengambil data profil dari tabel 'profiles' di Supabase
+  Future<void> _fetchProfile() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final userId = supabase.auth.currentUser!.id;
+      // Ambil data dari tabel 'profiles' di mana 'id' cocok dengan user yang login
+      final data = await supabase
+          .from('profiles')
+          .select()
+          .eq('id', userId)
+          .single();
+
+      if (mounted) {
+        setState(() {
+          _fullName = data['full_name'];
+          _email = supabase.auth.currentUser!.email;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal memuat profil: ${error.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  /// Fungsi untuk logout
+  Future<void> _signOut() async {
+    try {
+      await supabase.auth.signOut();
+    } catch (error) {
+      // Handle error jika perlu
+    } finally {
+      if (mounted) {
+        // Arahkan kembali ke halaman login setelah logout
+        Navigator.of(context).pushReplacementNamed('/login');
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // Ukuran tinggi header
     const double headerHeight = 250.0;
-    // Ukuran avatar
     const double avatarRadius = 60.0;
+
+    // Tampilkan loading indicator saat data sedang diambil
+    if (_isLoading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFFAF9F9),
       body: Stack(
         children: [
-          // --- LAPISAN 1: KONTEN UTAMA (YANG BISA DI-SCROLL) ---
           SingleChildScrollView(
             child: Column(
               children: [
-                // Spacer seukuran header untuk mendorong konten ke bawah
                 const SizedBox(height: headerHeight),
-
-                // Konten putih di bawah header
                 Container(
                   decoration: const BoxDecoration(
                     color: Color(0xFFFAF9F9),
@@ -34,20 +108,32 @@ class ProfileScreen extends StatelessWidget {
                     padding: const EdgeInsets.all(24.0),
                     child: Column(
                       children: [
-                        // Spacer untuk memberi ruang bagi avatar DAN jarak ke menu
-                        const SizedBox(
-                          height: avatarRadius + 8 + 24,
-                        ), // <-- PERUBAHAN DI SINI
-                        // --- Menu List ---
+                        const SizedBox(height: avatarRadius + 8 + 24),
                         _buildMenuItem(
                           icon: Icons.edit_outlined,
                           text: 'Edit Profil',
+                          onTap: () {
+                            // Navigasi ke halaman edit profil
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => EditProfileScreen(
+                                  currentName: _fullName ?? '',
+                                ),
+                              ),
+                            ).then((_) {
+                              // Refresh data setelah kembali dari halaman edit
+                              _fetchProfile();
+                            });
+                          },
                         ),
                         const SizedBox(height: 12),
-                        // Kamu bisa tambahkan menu lain di sini dengan memanggil _buildMenuItem lagi
-                        // _buildMenuItem(icon: Icons.settings_outlined, text: 'Pengaturan'),
-                        // const SizedBox(height: 12),
-                        // _buildMenuItem(icon: Icons.logout, text: 'Keluar'),
+                        // Tombol logout sekarang berfungsi
+                        _buildMenuItem(
+                          icon: Icons.logout,
+                          text: 'Keluar',
+                          onTap: _signOut,
+                        ),
                       ],
                     ),
                   ),
@@ -55,12 +141,9 @@ class ProfileScreen extends StatelessWidget {
               ],
             ),
           ),
-
-          // --- LAPISAN 2: HEADER BIRU MELENGKUNG ---
           _buildHeader(headerHeight),
-
-          // --- LAPISAN 3: AVATAR & INFO PROFIL (MENGAMBANG) ---
-          _buildProfileInfo(headerHeight, avatarRadius),
+          // Kirim data yang sudah di-fetch ke widget info profil
+          _buildProfileInfo(headerHeight, avatarRadius, _fullName, _email),
         ],
       ),
     );
@@ -77,7 +160,7 @@ class ProfileScreen extends StatelessWidget {
           children: [
             Positioned.fill(
               child: Image.asset(
-                'assets/line_9.png', // Ganti dengan path gambar pattern-mu
+                'assets/line_9.png',
                 fit: BoxFit.cover,
                 color: Colors.white.withOpacity(0.1),
                 colorBlendMode: BlendMode.modulate,
@@ -89,23 +172,26 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  // --- WIDGET UNTUK AVATAR, NAMA, & EMAIL ---
-  Widget _buildProfileInfo(double headerHeight, double avatarRadius) {
+  // --- WIDGET UNTUK AVATAR, NAMA, & EMAIL (MENERIMA DATA DINAMIS) ---
+  Widget _buildProfileInfo(
+    double headerHeight,
+    double avatarRadius,
+    String? fullName,
+    String? email,
+  ) {
     return Positioned(
-      // Atur posisi agar avatar berada di tengah-tengah lengkungan
       top: headerHeight - avatarRadius - 30,
       left: 0,
       right: 0,
       child: Column(
         children: [
-          // Stack untuk avatar dan ikon kamera
           Stack(
             children: [
               CircleAvatar(
                 radius: avatarRadius,
                 backgroundImage: const NetworkImage(
                   'https://i.pravatar.cc/150?img=3',
-                ), // Ganti dengan gambar profil
+                ),
               ),
               Positioned(
                 bottom: 0,
@@ -126,51 +212,60 @@ class ProfileScreen extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 16),
-          const Text(
-            'Hanestyan',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          // Gunakan data dari state
+          Text(
+            fullName ?? 'Nama Pengguna',
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 4),
-          const Text(
-            'Hanestyan@gmail.com',
-            style: TextStyle(fontSize: 14, color: Colors.grey),
+          Text(
+            email ?? 'email@pengguna.com',
+            style: const TextStyle(fontSize: 14, color: Colors.grey),
           ),
         ],
       ),
     );
   }
 
-  // --- WIDGET HELPER UNTUK SATU ITEM MENU ---
-  Widget _buildMenuItem({required IconData icon, required String text}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade200,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: Colors.black54),
-          const SizedBox(width: 16),
-          Text(
-            text,
-            style: const TextStyle(
-              fontWeight: FontWeight.w600,
-              color: Colors.black87,
+  // --- WIDGET HELPER UNTUK SATU ITEM MENU (DIBUAT BISA DIKLIK) ---
+  Widget _buildMenuItem({
+    required IconData icon,
+    required String text,
+    VoidCallback? onTap,
+  }) {
+    return GestureDetector(
+      // Dibungkus GestureDetector agar bisa diklik
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: Colors.black54),
+            const SizedBox(width: 16),
+            Text(
+              text,
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                color: Colors.black87,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
-// --- CLASS CLIPPER UNTUK BENTUK MELENGKUNG (SAMA SEPERTI DI HOMESCREEN) ---
+// --- CLASS CLIPPER UNTUK BENTUK MELENGKUNG ---
 class CustomHeaderClipper extends CustomClipper<Path> {
   @override
   Path getClip(Size size) {
     final path = Path();
-    path.lineTo(0, size.height - 80); // Atur kedalaman lengkungan di sini
+    path.lineTo(0, size.height - 80);
     path.quadraticBezierTo(
       size.width / 2,
       size.height,

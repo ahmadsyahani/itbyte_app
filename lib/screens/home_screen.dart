@@ -1,75 +1,179 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:itbyte_app/models/tugas_items.dart'; // Pastikan path ini benar
 
-// --- Halaman Utama Aplikasi ---
-class HomeScreen extends StatelessWidget {
+// Definisikan client Supabase agar mudah diakses
+final supabase = Supabase.instance.client;
+
+// ----------------------------------------------------
+
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  // State untuk menyimpan data profil dan status loading
+  bool _isLoading = true;
+  String? _fullName;
+  String? _nrp;
+  List<TugasItem> _deadlineTugas = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchInitialData();
+  }
+
+  Future<void> _fetchInitialData() async {
+    await Future.wait([_fetchUserProfile(), _fetchDeadlineTugas()]);
+
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _fetchUserProfile() async {
+    try {
+      final userId = supabase.auth.currentUser!.id;
+      final data = await supabase
+          .from('profiles')
+          .select('full_name, nrp')
+          .eq('id', userId)
+          .single();
+
+      if (mounted) {
+        setState(() {
+          _fullName = data['full_name'];
+          _nrp = data['nrp']?.toString();
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _fullName = 'Pengguna';
+          _nrp = 'N/A';
+        });
+      }
+    }
+  }
+
+  Future<void> _fetchDeadlineTugas() async {
+    try {
+      final now = DateTime.now();
+      final response = await supabase
+          .from('tugas')
+          .select()
+          .gte('deadline', now.toIso8601String())
+          .order('deadline', ascending: true)
+          .limit(2);
+
+      if (mounted) {
+        setState(() {
+          _deadlineTugas = response
+              .map((item) => TugasItem.fromJson(item))
+              .toList();
+        });
+      }
+    } catch (e) {
+      print('Gagal memuat tugas deadline: $e');
+    }
+  }
+
+  String _getGreeting() {
+    final hour = DateTime.now().hour;
+    if (hour < 11) {
+      return 'Selamat Pagi';
+    } else if (hour < 15) {
+      return 'Selamat Siang';
+    } else if (hour < 19) {
+      return 'Selamat Sore';
+    } else {
+      return 'Selamat Malam';
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // Mengatur warna status bar menjadi transparan
     SystemChrome.setSystemUIOverlayStyle(
       SystemUiOverlayStyle.light.copyWith(statusBarColor: Colors.transparent),
     );
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F8), // Warna background utama
+      backgroundColor: const Color(0xFFF5F5F8),
       body: Stack(
         children: [
-          // --- Lapisan Konten Utama (Bisa di-scroll) ---
-          SingleChildScrollView(
-            child: Column(
-              children: [
-                // Spacer diperbesar agar konten di bawah tidak tertutup oleh menu icon yang fixed
-                const SizedBox(height: 430),
-
-                // --- Jadwal Hari Ini ---
-                _buildJadwalSection(),
-                const SizedBox(height: 24),
-
-                // --- Tugas Mendekati Deadline ---
-                _buildTugasSection(),
-                const SizedBox(height: 24),
-              ],
+          if (_isLoading)
+            const Center(child: CircularProgressIndicator())
+          else
+            RefreshIndicator(
+              onRefresh: _fetchInitialData,
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: Column(
+                  children: [
+                    const SizedBox(height: 430),
+                    _buildJadwalSection(),
+                    const SizedBox(height: 24),
+                    _buildTugasSection(),
+                    const SizedBox(height: 24),
+                  ],
+                ),
+              ),
             ),
-          ),
-
-          // --- Lapisan Header Biru Melengkung ---
           _buildHeader(),
-
-          // --- Lapisan Kartu ByteCash (Menumpuk di atas) ---
           _buildByteCashCard(context),
-
-          // --- Lapisan Menu Icon (Fixed Position) ---
-          Positioned(
-            top: 320, // Atur posisi vertikal menu icon
-            left: 0,
-            right: 0,
-            child: _buildMenuIcons(context),
-          ),
+          _buildMenuContainer(context),
         ],
       ),
     );
   }
 
-  // --- WIDGET UNTUK HEADER BIRU ---
+  Widget _buildMenuContainer(BuildContext context) {
+    return Positioned(
+      top: 300,
+      left: 0,
+      right: 0,
+      child: Container(
+        padding: const EdgeInsets.only(top: 20.0, bottom: 16.0),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF5F5F8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.withOpacity(0.15),
+              spreadRadius: 1,
+              blurRadius: 10,
+              offset: const Offset(0, 5),
+            ),
+          ],
+        ),
+        child: _buildMenuIcons(context),
+      ),
+    );
+  }
+
   Widget _buildHeader() {
+    final greeting = _getGreeting();
+    final firstName = _fullName?.split(' ').first ?? 'Pengguna';
+
     return ClipPath(
       clipper: CustomHeaderClipper(),
       child: Container(
         height: 300,
         color: const Color(0xFF4361EE),
-        // Child dari Container sekarang adalah Stack
         child: Stack(
           children: [
-            Positioned(
-              top: 40,
+            Positioned.fill(
               child: Image.asset(
-                width: 500,
-                height: 200,
                 'assets/line_9.png',
                 fit: BoxFit.cover,
-                color: Colors.white.withOpacity(0.2),
+                color: Colors.white.withOpacity(0.1),
                 colorBlendMode: BlendMode.modulate,
               ),
             ),
@@ -89,22 +193,25 @@ class HomeScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 16),
-                    const Column(
+                    Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          'Selamat Pagi, Ahmad',
-                          style: TextStyle(
+                          '$greeting, $firstName',
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        SizedBox(height: 4),
+                        const SizedBox(height: 4),
                         Text(
-                          '3125600058',
-                          style: TextStyle(color: Colors.white70, fontSize: 14),
+                          _nrp ?? 'Memuat NRP...',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 14,
+                          ),
                         ),
                       ],
                     ),
@@ -131,7 +238,6 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  // --- WIDGET UNTUK KARTU BYTECASH ---
   Widget _buildByteCashCard(BuildContext context) {
     return Positioned(
       top: 170,
@@ -204,9 +310,7 @@ class HomeScreen extends StatelessWidget {
                     ),
                   ),
                   GestureDetector(
-                    onTap: () {
-                      Navigator.pushNamed(context, '/bayarkas');
-                    },
+                    onTap: () => Navigator.pushNamed(context, '/bayarkas'),
                     child: Padding(
                       padding: const EdgeInsets.only(right: 8.0),
                       child: Column(
@@ -240,7 +344,6 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  // --- WIDGET UNTUK 4 ICON MENU (SUDAH DIPERBAIKI) ---
   Widget _buildMenuIcons(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24.0),
@@ -250,26 +353,17 @@ class HomeScreen extends StatelessWidget {
           _buildMenuItem(
             Icons.receipt,
             'Cek Kas',
-            onTap: () {
-              Navigator.pushNamed(
-                context,
-                '/cekkas',
-              ); // <-- Diperbaiki dari '/cek_kas'
-            },
+            onTap: () => Navigator.pushNamed(context, '/cekkas'),
           ),
           _buildMenuItem(
             Icons.assignment,
             'Tugas',
-            onTap: () {
-              Navigator.pushNamed(context, '/tugas');
-            },
+            onTap: () => Navigator.pushNamed(context, '/tugas'),
           ),
           _buildMenuItem(
             Icons.calendar_today,
             'Jadwal Kuliah',
-            onTap: () {
-              Navigator.pushNamed(context, '/jadwalkuliah');
-            },
+            onTap: () => Navigator.pushNamed(context, '/jadwalkuliah'),
           ),
           _buildMenuItem(Icons.folder_open, 'Materi'),
         ],
@@ -277,7 +371,6 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  // --- WIDGET HELPER UNTUK SATU ITEM MENU ---
   Widget _buildMenuItem(IconData icon, String label, {VoidCallback? onTap}) {
     return GestureDetector(
       onTap: onTap,
@@ -289,7 +382,7 @@ class HomeScreen extends StatelessWidget {
               color: Color(0xFF4361EE),
               shape: BoxShape.circle,
             ),
-            child: Icon(icon, color: const Color(0xFFFFFFFF), size: 30),
+            child: Icon(icon, color: Colors.white, size: 30),
           ),
           const SizedBox(height: 8),
           Text(
@@ -305,7 +398,6 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  // --- WIDGET UNTUK BAGIAN JADWAL ---
   Widget _buildJadwalSection() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24.0),
@@ -385,7 +477,6 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  // --- WIDGET HELPER UNTUK DETAIL JADWAL ---
   Widget _buildJadwalDetailRow(
     IconData icon,
     String text, {
@@ -400,7 +491,6 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  // --- WIDGET UNTUK BAGIAN TUGAS ---
   Widget _buildTugasSection() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24.0),
@@ -412,34 +502,40 @@ class HomeScreen extends StatelessWidget {
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
           ),
           const SizedBox(height: 16),
-          _buildTugasCard(
-            subject: 'Logika dan Algoritma',
-            title: 'Membuat Flowchart tentang Project Pribadi',
-            date1: 'Senin, 13 Oktober 2025',
-            date2: 'Selasa, 21 Oktober 2025 (23:59)',
-            isDone: false,
-          ),
-          const SizedBox(height: 16),
-          _buildTugasCard(
-            subject: 'Logika dan Algoritma',
-            title: 'Membuat Flowchart tentang Project Pribadi',
-            date1: 'Senin, 13 Oktober 2025',
-            date2: 'Selasa, 21 Oktober 2025 (23:59)',
-            isDone: true,
-          ),
+          if (_deadlineTugas.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE8F0FE),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: const Center(
+                child: Text(
+                  'Tidak ada tugas mendekati deadline.',
+                  style: TextStyle(color: Colors.grey),
+                ),
+              ),
+            )
+          else
+            ..._deadlineTugas
+                .map(
+                  (tugas) => Padding(
+                    padding: const EdgeInsets.only(bottom: 16.0),
+                    child: _buildTugasCard(tugas),
+                  ),
+                )
+                .toList(),
         ],
       ),
     );
   }
 
-  // --- WIDGET UNTUK SATU KARTU TUGAS ---
-  Widget _buildTugasCard({
-    required String subject,
-    required String title,
-    required String date1,
-    required String date2,
-    required bool isDone,
-  }) {
+  Widget _buildTugasCard(TugasItem tugas) {
+    final deadlineFormatted = DateFormat(
+      'EEEE, d MMMM yyyy',
+      'id_ID',
+    ).format(tugas.deadline);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -453,54 +549,26 @@ class HomeScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                subject,
+                tugas.matkul,
                 style: const TextStyle(
                   fontWeight: FontWeight.bold,
                   color: Colors.black87,
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: isDone ? Colors.green.shade100 : Colors.red.shade100,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      isDone ? Icons.check_circle : Icons.pending_actions,
-                      size: 16,
-                      color: isDone ? Colors.green : Colors.red,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      isDone ? 'Done' : 'Kerjakan',
-                      style: TextStyle(
-                        color: isDone ? Colors.green : Colors.red,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             ],
           ),
           const SizedBox(height: 12),
-          Text(title, style: const TextStyle(color: Colors.black54)),
+          Text(tugas.title, style: const TextStyle(color: Colors.black54)),
           const Divider(color: Colors.grey, height: 24),
-          _buildTugasDetailRow(Icons.calendar_today_outlined, date1),
-          const SizedBox(height: 8),
-          _buildTugasDetailRow(Icons.calendar_today, date2),
+          _buildTugasDetailRow(
+            Icons.calendar_today_outlined,
+            deadlineFormatted,
+          ),
         ],
       ),
     );
   }
 
-  // --- FUNGSI HILANG YANG SUDAH DITAMBAHKAN KEMBALI ---
   Widget _buildTugasDetailRow(IconData icon, String text) {
     return Row(
       children: [
@@ -512,7 +580,6 @@ class HomeScreen extends StatelessWidget {
   }
 }
 
-// --- CLASS UNTUK MEMBUAT BENTUK MELENGKUNG PADA HEADER ---
 class CustomHeaderClipper extends CustomClipper<Path> {
   @override
   Path getClip(Size size) {
@@ -530,7 +597,5 @@ class CustomHeaderClipper extends CustomClipper<Path> {
   }
 
   @override
-  bool shouldReclip(CustomClipper<Path> oldClipper) {
-    return false;
-  }
+  bool shouldReclip(CustomClipper<Path> oldClipper) => false;
 }

@@ -1,15 +1,25 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:itbyte_app/models/tugas_items.dart';
+
+// Definisikan client Supabase agar mudah diakses
+final supabase = Supabase.instance.client;
 
 class TugasScreen extends StatefulWidget {
   const TugasScreen({super.key});
-
   @override
   State<TugasScreen> createState() => _TugasScreenState();
 }
 
 class _TugasScreenState extends State<TugasScreen> {
-  // Daftar mata kuliah untuk dropdown
-  final List<String> _mataKuliah = [
+  // State untuk data dan UI
+  bool _isLoading = true;
+  List<TugasItem> _tugasList = [];
+
+  // --- DIUBAH KEMBALI MENJADI STATIS ---
+  // State untuk dropdown sekarang menggunakan daftar yang tetap
+  final List<String> _mataKuliahOptions = [
     'Agama',
     'Dasar Sistem Komputer',
     'Keterampilan Non Teknis',
@@ -21,14 +31,102 @@ class _TugasScreenState extends State<TugasScreen> {
     'Pancasila',
     'Matematika 1',
   ];
-
-  // Variabel untuk menyimpan mata kuliah yang dipilih
   String? _selectedMataKuliah;
-  // Variabel untuk state dropdown (terbuka/tertutup)
   bool _isDropdownOpen = false;
 
   @override
+  void initState() {
+    super.initState();
+    _fetchTugas();
+  }
+
+  /// Mengambil data tugas dan statusnya dari Supabase
+  Future<void> _fetchTugas() async {
+    setState(() {
+      _isLoading = true;
+    });
+    try {
+      final tugasResponse = await supabase
+          .from('tugas')
+          .select()
+          .order('deadline', ascending: true);
+      final userId = supabase.auth.currentUser!.id;
+      final statusResponse = await supabase
+          .from('user_tugas_status')
+          .select('tugas_id, is_done')
+          .eq('user_id', userId);
+      final statusMap = {
+        for (var item in statusResponse) item['tugas_id']: item['is_done'],
+      };
+
+      if (mounted) {
+        setState(() {
+          _tugasList = tugasResponse.map((item) {
+            final tugas = TugasItem.fromJson(item);
+            tugas.isDone = statusMap[tugas.id] ?? false;
+            return tugas;
+          }).toList();
+
+          // --- BARIS INI DIHAPUS ---
+          // Kita tidak lagi membuat daftar matkul dari data tugas
+          // _mataKuliahOptions = _tugasList.map((tugas) => tugas.matkul).toSet().toList();
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal memuat tugas: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted)
+        setState(() {
+          _isLoading = false;
+        });
+    }
+  }
+
+  /// Fungsi untuk mengubah status 'is_done' di database
+  Future<void> _toggleDoneStatus(TugasItem tugas) async {
+    final userId = supabase.auth.currentUser!.id;
+    final newStatus = !tugas.isDone;
+
+    try {
+      await supabase.from('user_tugas_status').upsert({
+        'user_id': userId,
+        'tugas_id': tugas.id,
+        'is_done': newStatus,
+      });
+
+      if (mounted) {
+        setState(() {
+          tugas.isDone = newStatus;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Gagal mengubah status tugas.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // Logika filtering (tidak berubah dan akan berfungsi dengan benar)
+    final filteredList = _selectedMataKuliah == null
+        ? _tugasList
+        : _tugasList
+              .where((tugas) => tugas.matkul == _selectedMataKuliah)
+              .toList();
+
     return Scaffold(
       backgroundColor: const Color(0xFFFAF9F9),
       appBar: AppBar(
@@ -44,38 +142,56 @@ class _TugasScreenState extends State<TugasScreen> {
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 26),
         ),
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(24.0),
-        children: [
-          // --- Header Teks ---
-          const Text(
-            'Cek dan Kerjakan\nsemua Tugasmu.',
-            style: TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              height: 1.3,
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _fetchTugas,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(24.0),
+                children: [
+                  const Text(
+                    'Cek dan Kerjakan\nsemua Tugasmu.',
+                    style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  _buildCustomDropdown(),
+                  const SizedBox(height: 32),
+
+                  // UI akan menampilkan pesan ini jika filteredList kosong, sesuai permintaanmu
+                  if (filteredList.isEmpty && !_isLoading)
+                    const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(32.0),
+                        child: Text(
+                          'Tidak ada tugas untuk mata kuliah ini.',
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      ),
+                    )
+                  else
+                    ...filteredList
+                        .map(
+                          (tugas) => Padding(
+                            padding: const EdgeInsets.only(bottom: 16.0),
+                            child: _buildTugasCard(tugas),
+                          ),
+                        )
+                        .toList(),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 24),
-
-          // --- Dropdown Kustom ---
-          _buildCustomDropdown(),
-          const SizedBox(height: 32),
-
-          // --- Kartu Tugas ---
-          _buildTugasCard(),
-          // Kamu bisa tambahkan kartu tugas lainnya di sini
-        ],
-      ),
     );
   }
 
-  // --- WIDGET DROPDOWN KUSTOM YANG BARU ---
   Widget _buildCustomDropdown() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Tombol untuk membuka/menutup dropdown
         GestureDetector(
           onTap: () {
             setState(() {
@@ -90,7 +206,12 @@ class _TugasScreenState extends State<TugasScreen> {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFF4361EE), width: 1.5),
+              border: Border.all(
+                color: _selectedMataKuliah != null
+                    ? const Color(0xFF4361EE)
+                    : Colors.grey.shade400,
+                width: 1.5,
+              ),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -115,13 +236,11 @@ class _TugasScreenState extends State<TugasScreen> {
             ),
           ),
         ),
-
-        // Daftar item dropdown yang bisa muncul/hilang
         Visibility(
           visible: _isDropdownOpen,
           child: Container(
             margin: const EdgeInsets.only(top: 4),
-            height: 250, // Atur tinggi maksimal daftar
+            height: 250,
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
@@ -129,15 +248,19 @@ class _TugasScreenState extends State<TugasScreen> {
             ),
             child: ListView.builder(
               padding: const EdgeInsets.symmetric(vertical: 8),
-              itemCount: _mataKuliah.length,
+              itemCount: _mataKuliahOptions.length, // Menggunakan list statis
               itemBuilder: (context, index) {
-                final item = _mataKuliah[index];
+                final item = _mataKuliahOptions[index];
                 final isSelected = _selectedMataKuliah == item;
                 return GestureDetector(
                   onTap: () {
                     setState(() {
-                      _selectedMataKuliah = item;
-                      _isDropdownOpen = false; // Tutup dropdown setelah memilih
+                      if (_selectedMataKuliah == item) {
+                        _selectedMataKuliah = null;
+                      } else {
+                        _selectedMataKuliah = item;
+                      }
+                      _isDropdownOpen = false;
                     });
                   },
                   child: Container(
@@ -176,8 +299,13 @@ class _TugasScreenState extends State<TugasScreen> {
     );
   }
 
-  // --- WIDGET UNTUK KARTU TUGAS ---
-  Widget _buildTugasCard() {
+  Widget _buildTugasCard(TugasItem tugas) {
+    final deadlineFormatted = DateFormat(
+      'd MMMM yyyy',
+      'id_ID',
+    ).format(tugas.deadline);
+    final bool isDone = tugas.isDone;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -199,10 +327,13 @@ class _TugasScreenState extends State<TugasScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Membuat Laporan Praktikum Modul Looping',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  tugas.title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -215,9 +346,11 @@ class _TugasScreenState extends State<TugasScreen> {
                   color: const Color(0xFF4361EE),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: const Text(
-                  'PKP',
-                  style: TextStyle(
+                child: Text(
+                  tugas.matkul.length > 3
+                      ? tugas.matkul.substring(0, 3).toUpperCase()
+                      : tugas.matkul.toUpperCase(),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
                     fontSize: 12,
@@ -231,46 +364,56 @@ class _TugasScreenState extends State<TugasScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              const Column(
+              Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Deadline : 10 November 2025',
-                    style: TextStyle(color: Colors.red, fontSize: 12),
+                    'Deadline : $deadlineFormatted',
+                    style: const TextStyle(color: Colors.red, fontSize: 12),
                   ),
-                  SizedBox(height: 4),
+                  const SizedBox(height: 4),
                   Text(
-                    'Selesai : 5 November 2025',
-                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                    isDone ? 'Selesai' : 'Belum Selesai',
+                    style: TextStyle(
+                      color: isDone ? Colors.green : Colors.grey,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ],
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.green,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(
-                      Icons.check_circle_outline,
-                      color: Colors.white,
-                      size: 16,
-                    ),
-                    SizedBox(width: 6),
-                    Text(
-                      'Done',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
+              GestureDetector(
+                onTap: () => _toggleDoneStatus(tugas),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isDone ? Colors.green : Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                    border: isDone ? null : Border.all(color: Colors.green),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isDone
+                            ? Icons.check_circle
+                            : Icons.check_circle_outline,
+                        color: isDone ? Colors.white : Colors.green,
+                        size: 16,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 6),
+                      Text(
+                        isDone ? 'Selesai' : 'Tandai Selesai',
+                        style: TextStyle(
+                          color: isDone ? Colors.white : Colors.green,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],

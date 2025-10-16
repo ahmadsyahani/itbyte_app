@@ -1,11 +1,16 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart'; // Jangan lupa import Supabase
 
+// Buat variabel global agar mudah diakses
+final supabase = Supabase.instance.client;
+
+// Model Data (Sudah Benar)
 class JadwalItem {
   final String startTime;
   final String endTime;
-  final String subject;
+  final String matkul; // Menggunakan matkul
   final String topic;
   final String lecturer;
   final String room;
@@ -13,11 +18,23 @@ class JadwalItem {
   JadwalItem({
     required this.startTime,
     required this.endTime,
-    required this.subject,
+    required this.matkul,
     required this.topic,
     required this.lecturer,
     required this.room,
   });
+
+  // Factory constructor (Sudah Benar)
+  factory JadwalItem.fromJson(Map<String, dynamic> json) {
+    return JadwalItem(
+      startTime: json['start_time'] ?? '00:00',
+      endTime: json['end_time'] ?? '00:00',
+      matkul: json['matkul'] ?? 'No Subject', // Mencari 'matkul'
+      topic: json['topic'] ?? 'No Topic',
+      lecturer: json['lecturer'] ?? 'No Lecturer',
+      room: json['room'] ?? 'No Room',
+    );
+  }
 }
 
 class JadwalKuliahScreen extends StatefulWidget {
@@ -31,59 +48,17 @@ class _JadwalKuliahScreenState extends State<JadwalKuliahScreen> {
   int _selectedDayIndex = 0;
   Timer? _timer;
   DateTime _currentTime = DateTime.now();
+  bool _isLoading = true;
 
   final List<String> _days = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
 
-  // --- LANGKAH 2: MENYIAPKAN DATA JADWAL UNTUK SETIAP HARI ---
-  final Map<int, List<JadwalItem>> _allSchedules = {
-    // Data untuk hari Senin (index 0)
-    0: [
-      JadwalItem(
-        startTime: '11:20',
-        endTime: '13:50',
-        subject: 'Agama',
-        topic: 'Keutamaan Sholat',
-        lecturer: 'Dr. Si Imoet',
-        room: 'B.203',
-      ),
-      JadwalItem(
-        startTime: '14:40',
-        endTime: '16:20',
-        subject: 'Dasar Sistem Komputer',
-        topic: 'Aljabar Boolean',
-        lecturer: 'Ir. Rusdi',
-        room: 'SAW 6.7',
-      ),
-    ],
-    // Data untuk hari Selasa (index 1)
-    1: [
-      JadwalItem(
-        startTime: '08:00',
-        endTime: '10:30',
-        subject: 'Matematika 1',
-        topic: 'Kalkulus Dasar',
-        lecturer: 'Prof. Yanto',
-        room: 'C.101',
-      ),
-    ],
-    // Hari Rabu (index 2) tidak ada jadwal
-    2: [],
-    // Data untuk hari Kamis (index 3)
-    3: [
-      JadwalItem(
-        startTime: '09:00',
-        endTime: '11:00',
-        subject: 'Konsep Pemrograman',
-        topic: 'Tipe Data & Variabel',
-        lecturer: 'Dr. Budi',
-        room: 'D.305',
-      ),
-    ],
-  };
+  Map<int, List<JadwalItem>> _allSchedules = {};
 
   @override
   void initState() {
     super.initState();
+    _ambilDataJadwal();
+
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
         setState(() {
@@ -91,6 +66,52 @@ class _JadwalKuliahScreenState extends State<JadwalKuliahScreen> {
         });
       }
     });
+  }
+
+  Future<void> _ambilDataJadwal() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final response = await supabase.from('jadwal').select();
+      final Map<int, List<JadwalItem>> groupedSchedules = {
+        0: [],
+        1: [],
+        2: [],
+        3: [],
+        4: [],
+        5: [],
+        6: [],
+      };
+
+      for (var item in response) {
+        final dayIndex = item['day_of_week'] as int;
+        if (groupedSchedules.containsKey(dayIndex)) {
+          groupedSchedules[dayIndex]!.add(JadwalItem.fromJson(item));
+        }
+      }
+
+      setState(() {
+        _allSchedules = groupedSchedules;
+      });
+    } catch (error) {
+      print('Error mengambil data: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal memuat data: $error'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   @override
@@ -101,7 +122,6 @@ class _JadwalKuliahScreenState extends State<JadwalKuliahScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Ambil jadwal untuk hari yang dipilih
     final todaySchedule = _allSchedules[_selectedDayIndex] ?? [];
 
     return Scaffold(
@@ -123,18 +143,16 @@ class _JadwalKuliahScreenState extends State<JadwalKuliahScreen> {
         children: [
           _buildDaySelector(),
           const SizedBox(height: 32),
-
-          // --- LANGKAH 3: MENAMPILKAN JADWAL SECARA DINAMIS ---
           Expanded(
-            child: todaySchedule.isEmpty
-                // Jika tidak ada jadwal, tampilkan pesan
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : todaySchedule.isEmpty
                 ? const Center(
                     child: Text(
                       'Tidak ada jadwal hari ini.',
                       style: TextStyle(color: Colors.grey, fontSize: 16),
                     ),
                   )
-                // Jika ada jadwal, tampilkan list-nya
                 : ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 24.0),
                     itemCount: todaySchedule.length,
@@ -151,7 +169,6 @@ class _JadwalKuliahScreenState extends State<JadwalKuliahScreen> {
     );
   }
 
-  // --- WIDGET UNTUK SATU ITEM JADWAL (DIEDIT AGAR MENERIMA OBJEK) ---
   Widget _buildScheduleItem(JadwalItem jadwal) {
     final now = _currentTime;
     final start = DateFormat('HH:mm').parse(jadwal.startTime);
@@ -171,7 +188,8 @@ class _JadwalKuliahScreenState extends State<JadwalKuliahScreen> {
       end.minute,
     );
 
-    final isOngoing = now.isAfter(startTimeToday) && now.isBefore(endTimeToday);
+    final isOngoing =
+        !now.isBefore(startTimeToday) && now.isBefore(endTimeToday);
 
     final cardColor = isOngoing
         ? const [Color(0xFF8A98FD), Color(0xFF4361EE)]
@@ -203,7 +221,6 @@ class _JadwalKuliahScreenState extends State<JadwalKuliahScreen> {
     );
   }
 
-  // --- KODE LAINNYA TIDAK BERUBAH ---
   Widget _buildTimelineConnector(bool isOngoing) {
     return SizedBox(
       width: 20,
@@ -234,12 +251,15 @@ class _JadwalKuliahScreenState extends State<JadwalKuliahScreen> {
     );
   }
 
+  // --- FUNGSI DUPLIKAT SUDAH DIHAPUS, HANYA MENYISAKAN YANG INI ---
   Widget _buildDaySelector() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: List.generate(_days.length, (index) {
+    return SizedBox(
+      height: 80, // Beri tinggi tetap untuk area scroll
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 24.0),
+        itemCount: _days.length,
+        itemBuilder: (context, index) {
           final isSelected = _selectedDayIndex == index;
           return GestureDetector(
             onTap: () {
@@ -247,35 +267,45 @@ class _JadwalKuliahScreenState extends State<JadwalKuliahScreen> {
                 _selectedDayIndex = index;
               });
             },
-            child: Column(
-              children: [
-                Text(
-                  _days[index],
-                  style: TextStyle(
-                    color: isSelected ? const Color(0xFF4361EE) : Colors.grey,
-                    fontWeight: FontWeight.bold,
-                  ),
+            child: Container(
+              width: 50, // Beri lebar tetap untuk setiap chip
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: isSelected ? const Color(0xFF4361EE) : Colors.white,
+                borderRadius: BorderRadius.circular(25), // Membuat bentuk pil
+                border: Border.all(
+                  color: isSelected
+                      ? const Color(0xFF4361EE)
+                      : Colors.grey.shade300,
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  (index + 1).toString(),
-                  style: const TextStyle(
-                    color: Colors.black,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    _days[index],
+                    style: TextStyle(
+                      color: isSelected ? Colors.white : Colors.grey,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                if (isSelected)
-                  Container(
-                    height: 2,
-                    width: 20,
-                    color: const Color(0xFF4361EE),
+                  const SizedBox(height: 8),
+                  Text(
+                    (index + 1).toString(),
+                    style: TextStyle(
+                      color: isSelected ? Colors.white : Colors.black,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-              ],
+                ],
+              ),
             ),
           );
-        }),
+        },
+        separatorBuilder: (context, index) =>
+            const SizedBox(width: 12), // Jarak antar chip
       ),
     );
   }
@@ -295,7 +325,7 @@ class _JadwalKuliahScreenState extends State<JadwalKuliahScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            jadwal.subject,
+            jadwal.matkul,
             style: const TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.bold,
